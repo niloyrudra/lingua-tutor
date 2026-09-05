@@ -1,0 +1,35 @@
+{
+  "name": "lingua-tutor",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "AI-powered language tutor with speech-to-speech conversation",
+  "main": "backend/server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node --watch backend/server.js",
+    "setup": "node scripts/setup.js",
+    "test": "node --test \"backend/test/*.test.js\"",
+    "lint": "eslint backend frontend scripts",
+    "format": "prettier --write backend frontend scripts"
+  },
+  "dependencies": {
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2",
+    "multer": "^2.0.1",
+    "uuid": "^11.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "prettier": "^3.2.5",
+    "supertest": "^7.0.0"
+  }
+}

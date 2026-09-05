@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lingua Tutor — Your AI Language Coach</title>
+    <link rel="stylesheet" href="/css/fonts.css" />
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body>
+    <!-- ── SETUP SCREEN ─────────────────────────────────────────────────────── -->
+    <div id="setup-screen" class="screen active">
+      <div class="setup-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+      </div>
+
+      <div class="setup-container">
+        <header class="setup-header">
+          <div class="logo">
+            <span class="logo-icon">🌍</span>
+            <span class="logo-text">Lingua</span>
+          </div>
+          <p class="logo-tagline">Your personal language tutor. Speak. Learn. Repeat.</p>
+        </header>
+
+        <div class="setup-card">
+          <h2 class="section-title">Configure your session</h2>
+
+          <!-- Language -->
+          <div class="field-group">
+            <label class="field-label">I want to learn</label>
+            <div id="language-grid" class="option-grid"></div>
+          </div>
+
+          <!-- Level -->
+          <div class="field-group">
+            <label class="field-label">My current level</label>
+            <div id="level-grid" class="option-grid level-grid"></div>
+          </div>
+
+          <!-- Conversation type -->
+          <div class="field-group">
+            <label class="field-label">Conversation type</label>
+            <div id="conv-type-grid" class="option-grid conv-grid"></div>
+          </div>
+
+          <!-- Subtype -->
+          <div class="field-group" id="subtype-group" style="display: none">
+            <label class="field-label">Specific focus</label>
+            <div id="subtype-grid" class="option-grid subtype-grid"></div>
+          </div>
+
+          <!-- Tutor style -->
+          <div class="field-group">
+            <label class="field-label">Tutor personality</label>
+            <div id="style-grid" class="option-grid style-grid"></div>
+          </div>
+
+          <button id="start-btn" class="start-btn" disabled>
+            <span class="start-btn-text">Start Session</span>
+            <span class="start-btn-arrow">→</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SESSION SCREEN ────────────────────────────────────────────────────── -->
+    <div id="session-screen" class="screen">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <span class="logo-icon">🌍</span>
+          <span class="sidebar-title">Lingua</span>
+        </div>
+
+        <div class="session-info" id="session-info-panel">
+          <!-- populated by JS -->
+        </div>
+
+        <div class="sidebar-section">
+          <p class="sidebar-label">Session stats</p>
+          <div class="stats-grid">
+            <div class="stat"><span id="stat-turns">0</span><small>turns</small></div>
+            <div class="stat"><span id="stat-time">0:00</span><small>time</small></div>
+          </div>
+        </div>
+
+        <div class="sidebar-actions">
+          <button class="btn-ghost" id="text-mode-btn" title="Type instead of speak">⌨️ Type mode</button>
+          <button class="btn-ghost danger" id="end-session-btn">✕ End session</button>
+        </div>
+      </aside>
+
+      <!-- Main conversation area -->
+      <main class="conversation-area">
+        <div id="chat-log" class="chat-log">
+          <!-- messages injected here -->
+        </div>
+
+        <!-- Mic area -->
+        <div class="mic-area" id="mic-area">
+          <div class="mic-hint" id="mic-hint">Press and hold to speak</div>
+          <button class="mic-btn" id="mic-btn" aria-label="Hold to speak">
+            <div class="mic-ring"></div>
+            <div class="mic-ring mic-ring-2"></div>
+            <svg class="mic-icon" viewBox="0 0 24 24" fill="none">
+              <path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z" fill="currentColor" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </button>
+          <div class="mic-status" id="mic-status">Ready</div>
+        </div>
+
+        <!-- Text input (hidden by default) -->
+        <div class="text-input-area" id="text-input-area" style="display: none">
+          <textarea id="text-input" placeholder="Type in your target language..." rows="2"></textarea>
+          <button id="text-send-btn" class="btn-primary">Send</button>
+        </div>
+      </main>
+    </div>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" class="loading-overlay" style="display: none">
+      <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <p id="loading-text">Preparing your tutor...</p>
+      </div>
+    </div>
+
+    <script src="/js/render.js"></script>
+    <script src="/js/app.js"></script>
+  </body>
+</html>

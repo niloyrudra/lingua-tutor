@@ -1,0 +1,168 @@
+name: lingua-tutor
+
+# ── VOLUMES ───────────────────────────────────────────────────────────────────
+volumes:
+  ollama-data:       # persists pulled LLM models between restarts
+  whisper-cache:     # persists downloaded Whisper model weights
+  tts-voices:        # persists Piper voice models (downloaded at build/runtime)
+  lingua-data:       # Node app runtime data: session persistence + TTS audio cache
+
+# ── NETWORK ───────────────────────────────────────────────────────────────────
+networks:
+  lingua-net:
+    driver: bridge
+
+# ── SERVICES ─────────────────────────────────────────────────────────────────
+services:
+
+  # ── 1. OLLAMA (local LLM) ─────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: lingua-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"   # loopback only — no LAN exposure
+    networks:
+      - lingua-net
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h  # keep model hot in memory
+    # GPU support — uncomment if you have NVIDIA GPU + nvidia-container-toolkit
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ── 2. MODEL PULLER (runs once, pulls the LLM model) ─────────────────────
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: lingua-ollama-pull
+    restart: on-failure
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama-data:/root/.ollama
+      - ./scripts:/scripts:ro
+    networks:
+      - lingua-net
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+    entrypoint: ["sh", "/scripts/pull-model.sh"]
+
+  # ── 3. WHISPER STT SERVICE ────────────────────────────────────────────────
+  whisper:
+    build:
+      context: ./services/whisper
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-small}
+    container_name: lingua-whisper
+    restart: unless-stopped
+    volumes:
+      - whisper-cache:/root/.cache/huggingface  # cache model weights
+    networks:
+      - lingua-net
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-small}
+      - WHISPER_DEVICE=cpu
+      - WHISPER_COMPUTE=int8
+      - WHISPER_BEAM_SIZE=${WHISPER_BEAM_SIZE:-5}
+      - WHISPER_CONCURRENCY=${WHISPER_CONCURRENCY:-1}
+      - WHISPER_MAX_AUDIO_BYTES=${WHISPER_MAX_AUDIO_BYTES:-26214400}
+    ports:
+      - "127.0.0.1:8001:8001"    # loopback only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── 4. TTS SERVICE (Piper + Kokoro + edge-tts) ────────────────────────────
+  tts:
+    build:
+      context: ./services/tts
+    container_name: lingua-tts
+    restart: unless-stopped
+    volumes:
+      - tts-voices:/app/voices        # persists Piper voices across rebuilds
+    networks:
+      - lingua-net
+    environment:
+      - COQUI_TOS_AGREED=1
+      - TTS_SPEED=${TTS_SPEED:-1.0}
+      - TTS_CONCURRENCY=${TTS_CONCURRENCY:-1}
+    ports:
+      - "127.0.0.1:8002:8002"    # loopback only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s       # Kokoro imports torch — takes a moment
+
+  # ── 5. LINGUA APP (Node.js) ───────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lingua-app
+    restart: unless-stopped
+    depends_on:
+      whisper:
+        condition: service_healthy
+      tts:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    volumes:
+      - lingua-data:/app/data
+    networks:
+      - lingua-net
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    environment:
+      # ── Service URLs (internal docker DNS) ──
+      - WHISPER_SERVICE_URL=http://whisper:8001
+      - TTS_SERVICE_URL=http://tts:8002
+      - OLLAMA_BASE_URL=http://ollama:11434
+
+      # ── Providers ──
+      - STT_PROVIDER=whisper
+      - TTS_PROVIDER=local
+      - LLM_PROVIDER=ollama
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+
+      # ── Session + persistence ──
+      - SESSION_MAX_HISTORY=${SESSION_MAX_HISTORY:-20}
+      - SESSION_PERSIST_DIR=/app/data/sessions
+      - AUDIO_CACHE_DIR=/app/data/audio-cache
+      - AUDIO_CACHE_MAX_BYTES=${AUDIO_CACHE_MAX_BYTES:-536870912}
+
+      # ── Optional cloud overrides (leave blank for full local) ──
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+
+      # ── Optional API auth (empty = no auth; set to require a Bearer token) ──
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
