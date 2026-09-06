@@ -9,11 +9,12 @@ import { AppError } from "./AppError.js";
 import { log } from "./logger.js";
 import { hashAudio, lookupAudio, storeAudio } from "./audioCache.js";
 
-export async function synthesizeSpeech(text, language = "de", voiceOverride = null) {
+export async function synthesizeSpeech(text, language = "de", voiceOverride = null, speedOverride = null) {
   const provider = env.TTS_PROVIDER;
+  const speed = speedOverride ?? env.TTS_SPEED;
 
   // Cache lookup — deterministic engines produce identical audio for identical input.
-  const key = hashAudio(text, language, voiceOverride, env.TTS_SPEED);
+  const key = hashAudio(text, language, voiceOverride, speed);
   const cached = await lookupAudio(key);
   if (cached) {
     log.debug("TTS cache hit", { key });
@@ -30,7 +31,7 @@ export async function synthesizeSpeech(text, language = "de", voiceOverride = nu
     case "local":
     case "kokoro":
     case "edge":
-      result = await synthesizeWithTTSService(text, language, voiceOverride);
+      result = await synthesizeWithTTSService(text, language, voiceOverride, speed);
       break;
     case "elevenlabs":
       result = await synthesizeWithElevenLabs(text, language, voiceOverride);
@@ -48,7 +49,7 @@ export async function synthesizeSpeech(text, language = "de", voiceOverride = nu
 }
 
 // ─── Local TTS microservice ──────────────────────────────────────────────────
-async function synthesizeWithTTSService(text, language, voice) {
+async function synthesizeWithTTSService(text, language, voice, speed) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), env.TTS_TIMEOUT_MS);
   try {
@@ -56,7 +57,7 @@ async function synthesizeWithTTSService(text, language, voice) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
-      body: JSON.stringify({ text, language, voice: voice || null, speed: env.TTS_SPEED }),
+      body: JSON.stringify({ text, language, voice: voice || null, speed: speed ?? env.TTS_SPEED }),
     });
 
     if (!res.ok) throw AppError.upstream(`TTS service error ${res.status}`);

@@ -45,6 +45,15 @@ router.get("/config", (req, res) => {
   res.json({ languages: LANGUAGES, conversationTypes: CONVERSATION_TYPES, levels: LEVELS, tutorStyles: TUTOR_STYLES });
 });
 
+// ─── Voices endpoint (proxy to TTS service) ──────────────────────────────────
+router.get("/voices", asyncRoute(async (req, res) => {
+  const { language } = req.query;
+  const url = `${env.TTS_SERVICE_URL}/voices${language ? `?language=${language}` : ""}`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw AppError.upstream(`TTS voices error ${response.status}`);
+  res.json(await response.json());
+}));
+
 // ─── Active session count ─────────────────────────────────────────────────────
 router.get("/sessions", (req, res) => {
   res.json({ activeSessions: sessionCount(), maxSessions: env.MAX_SESSIONS });
@@ -78,8 +87,10 @@ router.get(
 // ─── Start session (get opening message from tutor) ──────────────────────────
 router.post(
   "/session/:id/start",
-  asyncRoute(async (req, res) => {
+asyncRoute(async (req, res) => {
     const session = requireSession(req);
+    const voiceId = req.query.voice || null;
+    const speed = req.query.speed ? parseFloat(req.query.speed) : undefined;
     const llmResult = await withSessionLock(session.id, async () => {
       await addTurn(session.id, "user", "START_SESSION");
       const { systemPrompt, messages } = getMessagesForLLM(session.id);
@@ -88,7 +99,7 @@ router.post(
       return result;
     });
 
-    const ttsResult = await synthesizeSpeech(llmResult.text, session.config.targetLanguage);
+    const ttsResult = await synthesizeSpeech(llmResult.text, session.config.targetLanguage, voiceId, speed);
     res.json({
       text: llmResult.text,
       audioUrl: `/api/audio/${ttsResult.audioId}`,
@@ -133,7 +144,9 @@ router.post(
     log.info("Pipeline step 2/3 done", { sessionId: session.id, ms: Date.now() - started });
 
     // Step 3: Text-to-Speech (disk cached per unique sentence)
-    const ttsResult = await synthesizeSpeech(llmResult.text, session.config.targetLanguage);
+    const voiceId = req.query.voice || null;
+    const speed = req.query.speed ? parseFloat(req.query.speed) : undefined;
+    const ttsResult = await synthesizeSpeech(llmResult.text, session.config.targetLanguage, voiceId, speed);
     log.info("Pipeline done", { sessionId: session.id, ms: Date.now() - started });
 
     res.json({
@@ -153,6 +166,8 @@ router.post(
   asyncRoute(async (req, res) => {
     const session = requireSession(req);
     const { message } = req.body;
+    const voiceId = req.query.voice || req.body.voice || null;
+    const speed = req.query.speed ? parseFloat(req.query.speed) : (req.body.speed ? parseFloat(req.body.speed) : undefined);
     if (!message || typeof message !== "string" || !message.trim()) {
       throw AppError.validation("No message provided");
     }
@@ -165,7 +180,7 @@ router.post(
       return result;
     });
 
-    const ttsResult = await synthesizeSpeech(llmResult.text, session.config.targetLanguage);
+    const ttsResult = await synthesizeSpeech(llmResult.text, session.config.targetLanguage, voiceId, speed);
 
     res.json({
       transcript: message,

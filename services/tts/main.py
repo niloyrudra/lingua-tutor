@@ -96,6 +96,72 @@ EDGE_VOICES = {
     "en": "en-US-AriaNeural",
 }
 
+# Voice metadata with gender info for UI
+VOICE_METADATA = {
+    "de_DE-thorsten-high":   {"language": "de", "gender": "male",   "engine": "piper", "quality": "high"},
+    "de_DE-thorsten-medium": {"language": "de", "gender": "male",   "engine": "piper", "quality": "medium"},
+    "fr_FR-siwis-medium":    {"language": "fr", "gender": "female", "engine": "piper", "quality": "medium"},
+    "fr_FR-siwis-low":       {"language": "fr", "gender": "female", "engine": "piper", "quality": "low"},
+    "es_ES-sharvard-medium": {"language": "es", "gender": "male",   "engine": "piper", "quality": "medium"},
+    "it_IT-riccardo-x_low":  {"language": "it", "gender": "male",   "engine": "piper", "quality": "x_low"},
+    "pt_PT-tugao-medium":    {"language": "pt", "gender": "male",   "engine": "piper", "quality": "medium"},
+    "nl_NL-mls-medium":      {"language": "nl", "gender": "unknown","engine": "piper", "quality": "medium"},
+    "ja_JP-kokoro-medium":   {"language": "ja", "gender": "female", "engine": "piper", "quality": "medium"},
+    "zh_CN-huayan-medium":   {"language": "zh", "gender": "female", "engine": "piper", "quality": "medium"},
+    "en_US-lessac-high":     {"language": "en", "gender": "male",   "engine": "piper", "quality": "high"},
+    "en_US-amy-medium":      {"language": "en", "gender": "female", "engine": "piper", "quality": "medium"},
+    "de-DE-KatjaNeural":     {"language": "de", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "fr-FR-DeniseNeural":    {"language": "fr", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "es-ES-ElviraNeural":    {"language": "es", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "it-IT-ElsaNeural":      {"language": "it", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "pt-PT-RaquelNeural":    {"language": "pt", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "nl-NL-ColetteNeural":   {"language": "nl", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "ja-JP-NanamiNeural":    {"language": "ja", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "zh-CN-XiaoxiaoNeural":  {"language": "zh", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+    "en-US-AriaNeural":      {"language": "en", "gender": "female", "engine": "edge-tts", "quality": "neural"},
+}
+
+def get_available_voices(language: str | None = None) -> list[dict]:
+    """Return available voices, optionally filtered by language."""
+    voices = []
+    
+    # Piper voices (cached locally)
+    for voice_stem in _list_voices():
+        meta = VOICE_METADATA.get(voice_stem, {})
+        if language and meta.get("language") != language:
+            continue
+        voices.append({
+            "id": voice_stem,
+            "name": voice_stem.replace("_", " ").replace("-", " ").title(),
+            "language": meta.get("language", language or "unknown"),
+            "gender": meta.get("gender", "unknown"),
+            "engine": "piper",
+            "quality": meta.get("quality", "unknown"),
+            "available": True,
+        })
+    
+    # edge-tts voices (always available if engine loaded)
+    if EDGE_TTS_AVAILABLE:
+        for voice_id, meta in VOICE_METADATA.items():
+            if meta.get("engine") != "edge-tts":
+                continue
+            if language and meta.get("language") != language:
+                continue
+            # Avoid duplicates if already listed from Piper
+            if any(v["id"] == voice_id for v in voices):
+                continue
+            voices.append({
+                "id": voice_id,
+                "name": voice_id.replace("-", " ").replace("Neural", "").title(),
+                "language": meta.get("language"),
+                "gender": meta.get("gender"),
+                "engine": "edge-tts",
+                "quality": "neural",
+                "available": True,
+            })
+    
+    return voices
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -274,6 +340,11 @@ def health():
         "kokoro": KOKORO_AVAILABLE,
         "edge_tts": EDGE_TTS_AVAILABLE,
     }
+
+@app.get("/voices")
+def voices(language: str | None = None):
+    """Return available TTS voices, optionally filtered by language."""
+    return {"voices": get_available_voices(language)}
 
 @app.post("/synthesize")
 async def synthesize(req: TTSRequest):

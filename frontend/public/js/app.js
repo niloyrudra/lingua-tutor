@@ -16,6 +16,14 @@ const state = {
   sessionStartTime: null,
   timerInterval: null,
   turns: 0,
+  // TTS settings
+  ttsSettings: {
+    voiceId: null,
+    speed: 1.0,
+    volume: 1.0,
+  },
+  availableVoices: [],
+  audioContext: null,
 };
 
 /* ── INIT ────────────────────────────────────────────────────────────────── */
@@ -156,6 +164,34 @@ async function startSession() {
 
     state.session = await res.json();
 
+    // Fetch available voices for the session language
+    try {
+      const voicesRes = await fetch(`/api/voices?language=${state.session.config.targetLanguage}`);
+      const voicesData = await voicesRes.json();
+      state.availableVoices = voicesData.voices || [];
+      
+      // Load saved TTS settings or use defaults
+      const savedSettings = localStorage.getItem(`ttsSettings_${state.session.config.targetLanguage}`);
+      if (savedSettings) {
+        state.ttsSettings = { ...state.ttsSettings, ...JSON.parse(savedSettings) };
+      }
+      
+      // Set default voice if not set (prefer female for variety, or first available)
+      if (!state.ttsSettings.voiceId && state.availableVoices.length > 0) {
+        const femaleVoice = state.availableVoices.find(v => v.gender === "female");
+        state.ttsSettings.voiceId = (femaleVoice || state.availableVoices[0]).id;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch voices:", e);
+    }
+
+    // Initialize Web Audio API for volume control
+    try {
+      state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.warn("Web Audio API not available:", e);
+    }
+
     // Show session screen
     document.getElementById("setup-screen").classList.remove("active");
     document.getElementById("session-screen").style.display = "flex";
@@ -166,11 +202,15 @@ async function startSession() {
 
     // Get opening message
     showLoading("Your tutor is getting ready...");
-    const startRes = await fetch(`/api/session/${state.session.sessionId}/start`, { method: "POST" });
+    const params = new URLSearchParams();
+    if (state.ttsSettings.voiceId) params.set("voice", state.ttsSettings.voiceId);
+    if (state.ttsSettings.speed !== 1.0) params.set("speed", state.ttsSettings.speed.toFixed(1));
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    const startRes = await fetch(`/api/session/${state.session.sessionId}/start${queryString}`, { method: "POST" });
     const startData = await startRes.json();
 
     hideLoading();
-    appendMessage("tutor", startData.text);
+    appendMessage("tutor", startData.text, null, startData.audioUrl);
     playAudio(startData.audioUrl);
   } catch (e) {
     hideLoading();
@@ -213,6 +253,7 @@ function setupSessionControls() {
   const endBtn = document.getElementById("end-session-btn");
   const textSendBtn = document.getElementById("text-send-btn");
   const textInput = document.getElementById("text-input");
+  const voiceSettingsBtn = document.getElementById("voice-settings-btn");
 
   // Mic: press-and-hold
   micBtn.addEventListener("mousedown", startRecording);
@@ -235,6 +276,11 @@ function setupSessionControls() {
     textModeBtn.textContent = isTextMode ? "⌨️ Type mode" : "🎙️ Mic mode";
   });
 
+  // Voice settings modal
+  if (voiceSettingsBtn) {
+    voiceSettingsBtn.addEventListener("click", openVoiceSettings);
+  }
+
   // Text send
   textSendBtn.addEventListener("click", sendTextMessage);
   textInput.addEventListener("keydown", e => {
@@ -247,6 +293,90 @@ function setupSessionControls() {
   // End session
   endBtn.addEventListener("click", () => {
     if (confirm("End this session?")) endSession();
+  });
+}
+
+/* ── VOICE SETTINGS ───────────────────────────────────────────────────────── */
+function openVoiceSettings() {
+  if (state.availableVoices.length === 0) {
+    alert("No voices available for this language.");
+    return;
+  }
+
+  // Create modal
+  const modal = document.createElement("div");
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3>🎤 Voice Settings</h3>
+        <button class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-group">
+          <label>Voice</label>
+          <select id="voice-select">
+            ${state.availableVoices.map(v => 
+              `<option value="${v.id}" ${v.id === state.ttsSettings.voiceId ? "selected" : ""}>
+                ${v.name} (${v.gender}, ${v.engine}${v.quality ? ", " + v.quality : ""})
+              </option>`
+            ).join("")}
+          </select>
+        </div>
+        <div class="setting-group">
+          <label>Speed: <span id="speed-value">${state.ttsSettings.speed.toFixed(1)}</span>×</label>
+          <input type="range" id="speed-slider" min="0.5" max="2.0" step="0.1" value="${state.ttsSettings.speed}">
+        </div>
+        <div class="setting-group">
+          <label>Volume: <span id="volume-value">${Math.round(state.ttsSettings.volume * 100)}%</span></label>
+          <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="${state.ttsSettings.volume}">
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="voice-save-btn">Save</button>
+          <button class="btn-ghost" id="voice-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Event listeners
+  const voiceSelect = modal.querySelector("#voice-select");
+  const speedSlider = modal.querySelector("#speed-slider");
+  const volumeSlider = modal.querySelector("#volume-slider");
+  const speedValue = modal.querySelector("#speed-value");
+  const volumeValue = modal.querySelector("#volume-value");
+  const saveBtn = modal.querySelector("#voice-save-btn");
+  const cancelBtn = modal.querySelector("#voice-cancel-btn");
+  const closeBtn = modal.querySelector(".modal-close");
+
+  speedSlider.addEventListener("input", e => {
+    speedValue.textContent = parseFloat(e.target.value).toFixed(1) + "×";
+  });
+
+  volumeSlider.addEventListener("input", e => {
+    volumeValue.textContent = Math.round(e.target.value * 100) + "%";
+  });
+
+  const closeModal = () => modal.remove();
+
+  closeBtn.addEventListener("click", closeModal);
+  cancelBtn.addEventListener("click", closeModal);
+  modal.addEventListener("click", e => {
+    if (e.target === modal) closeModal();
+  });
+
+  saveBtn.addEventListener("click", () => {
+    state.ttsSettings.voiceId = voiceSelect.value;
+    state.ttsSettings.speed = parseFloat(speedSlider.value);
+    state.ttsSettings.volume = parseFloat(volumeSlider.value);
+
+    // Persist settings
+    const lang = state.session?.config?.targetLanguage || "de";
+    localStorage.setItem(`ttsSettings_${lang}`, JSON.stringify(state.ttsSettings));
+
+    closeModal();
   });
 }
 
@@ -321,7 +451,11 @@ async function processAudio(blob) {
     const formData = new FormData();
     formData.append("audio", blob, "recording.webm");
 
-    const res = await fetch(`/api/session/${state.session.sessionId}/speak`, {
+    const params = new URLSearchParams();
+    if (state.ttsSettings.voiceId) params.set("voice", state.ttsSettings.voiceId);
+    if (state.ttsSettings.speed !== 1.0) params.set("speed", state.ttsSettings.speed.toFixed(1));
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`/api/session/${state.session.sessionId}/speak${queryString}`, {
       method: "POST",
       body: formData,
     });
@@ -335,7 +469,7 @@ async function processAudio(blob) {
       appendMessage("user", null, data.transcript);
     }
 
-    appendMessage("tutor", data.text);
+    appendMessage("tutor", data.text, null, data.audioUrl);
     playAudio(data.audioUrl);
 
     state.turns++;
@@ -359,7 +493,11 @@ async function sendTextMessage() {
   appendMessage("user", null, message);
 
   try {
-    const res = await fetch(`/api/session/${state.session.sessionId}/text`, {
+    const params = new URLSearchParams();
+    if (state.ttsSettings.voiceId) params.set("voice", state.ttsSettings.voiceId);
+    if (state.ttsSettings.speed !== 1.0) params.set("speed", state.ttsSettings.speed.toFixed(1));
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`/api/session/${state.session.sessionId}/text${queryString}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
@@ -368,7 +506,7 @@ async function sendTextMessage() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    appendMessage("tutor", data.text);
+    appendMessage("tutor", data.text, null, data.audioUrl);
     playAudio(data.audioUrl);
 
     state.turns++;
@@ -381,7 +519,7 @@ async function sendTextMessage() {
 }
 
 /* ── CHAT MESSAGES ───────────────────────────────────────────────────────── */
-function appendMessage(role, text, transcript = null) {
+function appendMessage(role, text, transcript = null, audioUrl = null) {
   const chat = document.getElementById("chat-log");
 
   // Remove empty state
@@ -415,6 +553,22 @@ function appendMessage(role, text, transcript = null) {
       bubble.appendChild(tip);
     }
     msg.appendChild(bubble);
+
+    // Add replay button for tutor messages if audioUrl is available
+    if (audioUrl) {
+      const controls = document.createElement("div");
+      controls.className = "msg-controls";
+      
+      const replayBtn = document.createElement("button");
+      replayBtn.className = "replay-btn";
+      replayBtn.innerHTML = "🔊";
+      replayBtn.title = "Replay audio";
+      replayBtn.setAttribute("aria-label", "Replay audio");
+      replayBtn.addEventListener("click", () => playAudio(audioUrl));
+      controls.appendChild(replayBtn);
+      
+      msg.appendChild(controls);
+    }
   }
 
   const meta = document.createElement("div");
@@ -432,7 +586,35 @@ function appendMessage(role, text, transcript = null) {
 /* ── AUDIO PLAYBACK ──────────────────────────────────────────────────────── */
 function playAudio(url) {
   if (!url) return;
+  
+  // Use Web Audio API for volume control if available
+  if (state.audioContext) {
+    fetch(url)
+      .then(response => response.arrayBuffer())
+      .then(arrayBuffer => state.audioContext.decodeAudioData(arrayBuffer))
+      .then(audioBuffer => {
+        const source = state.audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        
+        const gainNode = state.audioContext.createGain();
+        gainNode.gain.value = state.ttsSettings.volume;
+        
+        source.connect(gainNode);
+        gainNode.connect(state.audioContext.destination);
+        source.start(0);
+      })
+      .catch(e => {
+        console.warn("Web Audio playback failed, falling back to HTMLAudioElement:", e);
+        fallbackPlayAudio(url);
+      });
+  } else {
+    fallbackPlayAudio(url);
+  }
+}
+
+function fallbackPlayAudio(url) {
   const audio = new Audio(url);
+  audio.volume = state.ttsSettings.volume;
   audio.preload = "auto";
   audio.play().catch(e => console.warn("Audio play failed:", e));
 }
