@@ -365,30 +365,72 @@ const LOCAL_DICT_DE = {
   "durchfallen": [{ pos: "verb", def: "to fail (exam)" }],
 };
 
+// ─── Dictionary proxy (MyMemory Translation API + local fallback) ───────────────
+// Language code mapping for MyMemory API
+const MYMEMORY_LANG_MAP = {
+  de: "de|en",
+  fr: "fr|en",
+  es: "es|en",
+  it: "it|en",
+  pt: "pt|en",
+  nl: "nl|en",
+  ja: "ja|en",
+  zh: "zh|en",
+  en: "en|en",
+};
+
+async function fetchFromMyMemory(word, langPair) {
+  try {
+    const response = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=${langPair}`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data.responseStatus !== 200) return null;
+
+    const defs = [];
+    const seen = new Set();
+
+    // Primary translation
+    if (data.responseData?.translatedText) {
+      const text = data.responseData.translatedText.trim();
+      if (text && !seen.has(text.toLowerCase())) {
+        defs.push({ pos: "translation", def: text });
+        seen.add(text.toLowerCase());
+      }
+    }
+
+    // Alternative translations from matches
+    if (data.matches) {
+      for (const m of data.matches) {
+        if (defs.length >= 3) break;
+        const t = m.translation?.trim();
+        if (t && !seen.has(t.toLowerCase()) && t.toLowerCase() !== word.toLowerCase()) {
+          const subj = m.subject ? ` (${m.subject})` : "";
+          defs.push({ pos: "translation", def: t + subj });
+          seen.add(t.toLowerCase());
+        }
+      }
+    }
+
+    return defs.slice(0, 3);
+  } catch {
+    return null;
+  }
+}
+
 router.get("/dictionary/:word", strictRateLimit({ prefix: "dictionary", limit: 60, windowMs: 60_000 }), asyncRoute(async (req, res) => {
-  const word = req.params.word.toLowerCase().replace(/[^a-zäöüß]/g, "");
+  const word = req.params.word.toLowerCase().replace(/[^a-zäöüßàáâãèéêëìíîïòóôõùúûüñç]/g, "");
   const lang = (req.query.lang || "en").toLowerCase();
   if (!word || word.length > 50) throw AppError.validation("Invalid word");
 
-  async function tryDictAPI(w) {
-    try {
-      const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`, {
-        signal: AbortSignal.timeout(8000),
-        headers: { 'User-Agent': 'lingua-tutor/1.0' },
-      });
-      if (!response.ok) return null;
-      const data = await response.json();
-      const entry = data[0];
-      return entry?.meanings?.flatMap(m =>
-        m.definitions?.slice(0, 2).map(d => ({ pos: m.partOfSpeech, def: d.definition }))
-      ) || [];
-    } catch { return null; }
-  }
+  const langPair = MYMEMORY_LANG_MAP[lang] || "en|en";
 
-  // Try primary API (only for English)
-  let defs = lang === "en" ? await tryDictAPI(word) : null;
+  // Try MyMemory Translation API (works for all supported languages)
+  let defs = await fetchFromMyMemory(word, langPair);
 
-  // Fallback to local dictionary based on language
+  // Fallback to local dictionary
   if (!defs || defs.length === 0) {
     if (lang === "de") {
       defs = LOCAL_DICT_DE[word] || [];
