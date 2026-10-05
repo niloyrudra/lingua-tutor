@@ -14,8 +14,8 @@ process.env.LLM_MAX_HISTORY_TOKENS = "900";
 const sm = await import("../services/sessionManager.js");
 
 const created = [];
-function make(config) {
-  const session = sm.createSession(config);
+async function make(config) {
+  const session = await sm.createSession(config);
   created.push(session.id);
   return session;
 }
@@ -31,8 +31,8 @@ afterEach(async () => {
   await fsp.rm(TMP, { recursive: true, force: true });
 });
 
-test("createSession applies defaults and normalizes config", () => {
-  const session = make({});
+test("createSession applies defaults and normalizes config", async () => {
+  const session = await make({});
   assert.ok(session.id);
   assert.equal(session.turnCount, 0);
   assert.equal(session.config.targetLanguage, "de");
@@ -40,25 +40,25 @@ test("createSession applies defaults and normalizes config", () => {
   assert.ok(session.systemPrompt.includes("LINGUA"));
 });
 
-test("createSession rejects wrong config via VALIDATION error", () => {
-  assert.throws(
+test("createSession rejects wrong config via VALIDATION error", async () => {
+  await assert.rejects(
     () => sm.createSession({ targetLanguage: "xx" }),
     err => err.code === "VALIDATION"
   );
 });
 
-test("createSession enforces MAX_SESSIONS", () => {
-  make({});
-  make({});
-  make({});
-  assert.throws(
+test("createSession enforces MAX_SESSIONS", async () => {
+  await make({});
+  await make({});
+  await make({});
+  await assert.rejects(
     () => sm.createSession({}),
     err => err.code === "RATE_LIMITED"
   );
 });
 
 test("addTurn serializes turns: history follows call order", async () => {
-  const session = make({});
+  const session = await make({});
   const tasks = [];
   for (let i = 0; i < 10; i++) {
     tasks.push(sm.addTurn(session.id, i % 2 === 0 ? "user" : "assistant", `message ${i}`));
@@ -73,7 +73,7 @@ test("addTurn serializes turns: history follows call order", async () => {
 });
 
 test("withSessionLock serializes a full LLM round trip", async () => {
-  const session = make({});
+  const session = await make({});
   const order = [];
   await Promise.all(
     Array.from({ length: 5 }, (_, i) =>
@@ -92,7 +92,7 @@ test("withSessionLock serializes a full LLM round trip", async () => {
 });
 
 test("token-aware trimming keeps history within LLM_MAX_HISTORY_TOKENS", async () => {
-  const session = make({});
+  const session = await make({});
   // 10 long messages — only a subset should survive into LLM context.
   for (let i = 0; i < 10; i++) {
     await sm.addTurn(session.id, i % 2 === 0 ? "user" : "assistant", "Wort ".repeat(80));
@@ -104,7 +104,7 @@ test("token-aware trimming keeps history within LLM_MAX_HISTORY_TOKENS", async (
 });
 
 test("deleteSession removes the session (and persisted file)", async () => {
-  const session = make({});
+  const session = await make({});
   await sm.deleteSession(session.id);
   assert.equal(sm.getSession(session.id), null);
 });
@@ -120,7 +120,7 @@ test("addTurn throws SESSION_NOT_FOUND for unknown id", async () => {
 });
 
 test("loadPersistedSessions restores persisted sessions", async () => {
-  make({ targetLanguage: "fr", conversationType: "daily_life" });
+  await make({ targetLanguage: "fr", conversationType: "daily_life" });
   // give the async persist a beat to flush
   await new Promise(r => setTimeout(r, 50));
   const loaded = await sm.loadPersistedSessions();

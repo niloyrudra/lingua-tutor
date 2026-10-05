@@ -83,7 +83,7 @@ function mutateTurn(session, role, content) {
   }
 }
 
-export function createSession(inputConfig) {
+export async function createSession(inputConfig) {
   if (sessions.size >= env.MAX_SESSIONS) {
     throw AppError.rateLimited("Too many active sessions. End an existing session first.");
   }
@@ -105,7 +105,7 @@ export function createSession(inputConfig) {
   };
 
   sessions.set(session.id, session);
-  persistSession(session);
+  await persistSession(session);
   log.info("Session created", {
     sessionId: session.id,
     targetLanguage: config.targetLanguage,
@@ -151,6 +151,7 @@ export function getMessagesForLLM(sessionId) {
 
 export async function deleteSession(id) {
   sessions.delete(id);
+  locks.delete(id);
   await removePersistedSession(id);
 }
 
@@ -196,6 +197,7 @@ const cleanupTimer = setInterval(() => {
   for (const [id, session] of sessions) {
     if (Date.parse(session.lastActivity) < cutoff) {
       sessions.delete(id);
+      locks.delete(id);
       removePersistedSession(id);
     }
   }

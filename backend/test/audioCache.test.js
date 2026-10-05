@@ -9,7 +9,7 @@ const TMP = path.join(os.tmpdir(), `lingua-audio-cache-${Date.now()}`);
 process.env.AUDIO_CACHE_DIR = TMP;
 process.env.AUDIO_CACHE_MAX_BYTES = (8 * 1024).toString();
 
-const { hashAudio, lookupAudio, storeAudio } = await import("../services/audioCache.js");
+const { hashAudio, lookupAudio, storeAudio, pruneAudioCache } = await import("../services/audioCache.js");
 
 beforeEach(async () => {
   await fsp.mkdir(TMP, { recursive: true });
@@ -47,6 +47,7 @@ test("pruneAudioCache removes oldest files past the byte budget", async () => {
   }
   // 12 pairs (24 files ≈ 13KB) would be stored, but the 8KB budget forces
   // eviction — only the most recent pairs should survive.
+  await pruneAudioCache();
   const files = await fsp.readdir(TMP);
   assert.ok(files.length >= 2, "at least one pair should remain");
   assert.ok(files.length < 24, "oldest files should have been pruned");

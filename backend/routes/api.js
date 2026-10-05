@@ -23,12 +23,15 @@ import { getLLMResponse } from "../services/llmService.js";
 import { synthesizeSpeech } from "../services/ttsService.js";
 import { LANGUAGES, CONVERSATION_TYPES, LEVELS, TUTOR_STYLES } from "../config/languages.js";
 import { assertSessionId } from "../utils/validate.js";
+import { rateLimit, strictRateLimit } from "../middleware/rateLimit.js";
 
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
+
+router.use(rateLimit({ prefix: "api", limit: 120, windowMs: 60_000 }));
 
 // Wraps async handlers so rejections reach the central error handler.
 const asyncRoute = fn => (req, res, next) => fn(req, res, next).catch(next);
@@ -62,8 +65,9 @@ router.get("/sessions", (req, res) => {
 // ─── Create a new session ────────────────────────────────────────────────────
 router.post(
   "/session",
+  strictRateLimit({ prefix: "session-create", limit: 10, windowMs: 60_000 }),
   asyncRoute(async (req, res) => {
-    const session = createSession(req.body);
+    const session = await createSession(req.body);
     res.json({ sessionId: session.id, config: session.config });
   })
 );
@@ -113,6 +117,7 @@ asyncRoute(async (req, res) => {
 router.post(
   "/session/:id/speak",
   upload.single("audio"),
+  strictRateLimit({ prefix: "session-speak", limit: 30, windowMs: 60_000 }),
   asyncRoute(async (req, res) => {
     const started = Date.now();
     const session = requireSession(req);
@@ -163,6 +168,7 @@ router.post(
 // ─── Text input (fallback for testing without mic) ───────────────────────────
 router.post(
   "/session/:id/text",
+  strictRateLimit({ prefix: "session-text", limit: 30, windowMs: 60_000 }),
   asyncRoute(async (req, res) => {
     const session = requireSession(req);
     const { message } = req.body;

@@ -59,7 +59,6 @@ export async function storeAudio(key, buffer, mimeType, provider) {
       fsp.writeFile(cacheFileFor(key), buffer),
       fsp.writeFile(metaFileFor(key), JSON.stringify({ mimeType, provider, createdAt: Date.now() })),
     ]);
-    await pruneAudioCache();
   } catch (err) {
     log.warn("Audio cache write failed", { message: err.message });
   }
@@ -68,7 +67,7 @@ export async function storeAudio(key, buffer, mimeType, provider) {
 /**
  * LRU eviction by mtime until the cache directory is within MAX_BYTES.
  */
-export async function pruneAudioCache() {
+async function pruneAudioCache() {
   let files;
   try {
     files = await fsp.readdir(CACHE_DIR);
@@ -103,3 +102,12 @@ export async function pruneAudioCache() {
     }
   }
 }
+
+// Run pruning periodically (every 5 minutes) instead of on every write
+const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+const pruneTimer = setInterval(() => {
+  pruneAudioCache().catch(err => log.warn("Audio cache prune failed", { message: err.message }));
+}, PRUNE_INTERVAL_MS);
+pruneTimer.unref();
+
+export { pruneAudioCache };
