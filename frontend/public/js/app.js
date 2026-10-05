@@ -24,7 +24,164 @@ const state = {
   },
   availableVoices: [],
   audioContext: null,
+  // Word translation popup
+  wordCache: new Map(), // word -> { definitions, timestamp }
+  wordPopup: null,
+  wordPopupTarget: null,
 };
+
+/* ── WORD TRANSLATION POPUP ───────────────────────────────────────────────── */
+const DICTIONARY_API = "/api/dictionary/";
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+async function fetchWordDefinition(word) {
+  const lang = state.session?.config?.targetLanguage || "en";
+  const cacheKey = `${lang}:${word}`;
+  const cached = state.wordCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.definitions;
+  }
+  try {
+    const res = await fetch(`${DICTIONARY_API}${encodeURIComponent(word)}?lang=${lang}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data.definitions || [];
+    state.wordCache.set(cacheKey, { definitions: result, timestamp: Date.now() });
+    return result;
+  } catch (e) {
+    console.warn("Dictionary fetch failed:", e);
+    return null;
+  }
+}
+
+function showWordPopup(wordEl, word) {
+  hideWordPopup();
+  const rect = wordEl.getBoundingClientRect();
+  const popup = document.createElement("div");
+  popup.className = "word-popup";
+  popup.innerHTML = `<div class="word-popup-loading">Loading…</div>`;
+  document.body.appendChild(popup);
+
+  // Position popup above the word, flip if near top
+  const popupRect = popup.getBoundingClientRect();
+  let top = rect.top - popupRect.height - 8;
+  let left = rect.left + (rect.width - popupRect.width) / 2;
+  if (top < 8) top = rect.bottom + 8;
+  if (left < 8) left = 8;
+  if (left + popupRect.width > window.innerWidth - 8) {
+    left = window.innerWidth - popupRect.width - 8;
+  }
+  popup.style.top = `${top + window.scrollY}px`;
+  popup.style.left = `${left + window.scrollX}px`;
+
+  state.wordPopup = popup;
+  state.wordPopupTarget = wordEl;
+  wordEl.classList.add("word-popup-active");
+
+  fetchWordDefinition(word).then(defs => {
+    if (!state.wordPopup || state.wordPopupTarget !== wordEl) return; // closed/moved
+    if (!defs || defs.length === 0) {
+      popup.innerHTML = `<div class="word-popup-empty">No definition found</div>`;
+      return;
+    }
+    popup.innerHTML = `
+      <div class="word-popup-header">${word}</div>
+      <ul class="word-popup-defs">
+        ${defs.map(d => `<li><span class="word-popup-pos">${d.pos}</span> ${d.def}</li>`).join("")}
+      </ul>
+    `;
+    // Reposition after content loads
+    const newRect = popup.getBoundingClientRect();
+    let newTop = rect.top - newRect.height - 8;
+    let newLeft = rect.left + (rect.width - newRect.width) / 2;
+    if (newTop < 8) newTop = rect.bottom + 8;
+    if (newLeft < 8) newLeft = 8;
+    if (newLeft + newRect.width > window.innerWidth - 8) {
+      newLeft = window.innerWidth - newRect.width - 8;
+    }
+    popup.style.top = `${newTop + window.scrollY}px`;
+    popup.style.left = `${newLeft + window.scrollX}px`;
+  });
+}
+
+function hideWordPopup() {
+  if (state.wordPopup) {
+    state.wordPopup.remove();
+    state.wordPopup = null;
+  }
+  if (state.wordPopupTarget) {
+    state.wordPopupTarget.classList.remove("word-popup-active");
+    state.wordPopupTarget = null;
+  }
+}
+
+function setupWordPopupHandlers() {
+  const chatLog = document.getElementById("chat-log");
+  let touchTimer = null;
+  let touchStartEl = null;
+
+  // Click / tap on word token
+  chatLog.addEventListener("click", e => {
+    const wordEl = e.target.closest(".word-token");
+    if (!wordEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const word = wordEl.dataset.word;
+    if (word) showWordPopup(wordEl, word);
+  });
+
+  // Touch handling: tap to show, long-press not needed per requirements
+  chatLog.addEventListener("touchstart", e => {
+    const wordEl = e.target.closest(".word-token");
+    if (!wordEl) return;
+    touchStartEl = wordEl;
+    touchTimer = setTimeout(() => {
+      touchStartEl = null;
+    }, 500);
+  }, { passive: true });
+
+  chatLog.addEventListener("touchend", e => {
+    if (touchTimer) {
+      clearTimeout(touchTimer);
+      const wordEl = e.target.closest(".word-token");
+      if (wordEl && wordEl === touchStartEl) {
+        e.preventDefault();
+        const word = wordEl.dataset.word;
+        if (word) showWordPopup(wordEl, word);
+      }
+      touchStartEl = null;
+    }
+  });
+
+  // Hover on desktop: show after brief delay
+  let hoverTimer = null;
+  chatLog.addEventListener("mouseover", e => {
+    const wordEl = e.target.closest(".word-token");
+    if (!wordEl) return;
+    hoverTimer = setTimeout(() => {
+      const word = wordEl.dataset.word;
+      if (word) showWordPopup(wordEl, word);
+    }, 200);
+  });
+
+  chatLog.addEventListener("mouseout", e => {
+    const wordEl = e.target.closest(".word-token");
+    if (!wordEl || wordEl !== state.wordPopupTarget) return;
+    if (hoverTimer) clearTimeout(hoverTimer);
+    // Don't hide immediately; let user move mouse to popup
+  });
+
+  // Click outside to close
+  document.addEventListener("click", e => {
+    if (state.wordPopup && !state.wordPopup.contains(e.target) && !e.target.closest(".word-token")) {
+      hideWordPopup();
+    }
+  });
+
+  // Scroll/resize: reposition or close
+  window.addEventListener("scroll", hideWordPopup, { passive: true });
+  window.addEventListener("resize", hideWordPopup);
+}
 
 /* ── INIT ────────────────────────────────────────────────────────────────── */
 async function init() {
@@ -198,6 +355,7 @@ async function startSession() {
 
     buildSessionPanel();
     setupSessionControls();
+    setupWordPopupHandlers();
     startTimer();
 
     // Get opening message
